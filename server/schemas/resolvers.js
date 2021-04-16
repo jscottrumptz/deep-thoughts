@@ -1,6 +1,12 @@
 // import models
 const { User, Thought } = require('../models');
 
+// error handling
+const { AuthenticationError } = require('apollo-server-express');
+
+// import the token function from utils
+const { signToken } = require('../utils/auth');
+
 // A resolver can accept four arguments in the following order:
 //
 // parent: This is if we used nested resolvers to handle more complicated actions, as it would hold the reference to the
@@ -28,14 +34,14 @@ const resolvers = {
         // ternary operator to check if username exists. If it does, we set params to an object with a username key set
         // to that value. If it doesn't, we simply return an empty object.
         thoughts: async (parent, {username}) => {
-            const params = username ? { username } : {};
+            const params = username ? {username} : {};
             // We then pass that object, with or without any data in it, to our .find() method. If there's data, it'll
             // perform a lookup by a specific username. If there's not, it'll simply return every thought. Let's test this out.
-            return Thought.find(params).sort({ createdAt: -1 });
+            return Thought.find(params).sort({createdAt: -1});
         },
         // get a thought by _id
-        thought: async (parent, { _id }) => {
-            return Thought.findOne({ _id });
+        thought: async (parent, {_id}) => {
+            return Thought.findOne({_id});
         },
         // get all users
         users: async () => {
@@ -45,12 +51,101 @@ const resolvers = {
                 .populate('thoughts');
         },
         // get a user by username
-        user: async (parent, { username }) => {
-            return User.findOne({ username })
+        user: async (parent, {username}) => {
+            return User.findOne({username})
                 .select('-__v -password')
                 .populate('friends')
                 .populate('thoughts');
         },
+
+        // read request header for jwt
+        me: async (parent, args, context) => {
+            if (context.user) {
+                const userData = await User.findOne({_id: context.user._id})
+                    .select('-__v -password')
+                    .populate('thoughts')
+                    .populate('friends');
+
+                return userData;
+            }
+
+            throw new AuthenticationError('Not logged in');
+        }
+    },
+    Mutation: {
+        // creates a user and issues them a token
+        addUser: async (parent, args) => {
+            const user = await User.create(args);
+            // create the token
+            const token = signToken(user);
+
+            return { token, user };
+        },
+        // verifies user exits and issues them a token
+        login: async (parent, {email, password}) => {
+            const user = await User.findOne({email});
+
+            if(!user) {
+                throw new AuthenticationError('Incorrect credentials');
+            }
+
+            const correctPw = await user.isCorrectPassword(password);
+
+            if (!correctPw) {
+                throw new AuthenticationError('Incorrect Credentials');
+            }
+
+            // create the token
+            const token = signToken(user);
+            return { token, user };
+        },
+        // create a thought
+        addThought: async (parent, args, context) => {
+            if (context.user) {
+                const thought = await Thought.create({ ...args, username: context.user.username });
+
+                await User.findByIdAndUpdate(
+                    { _id: context.user._id },
+                    { $push: { thoughts: thought._id } },
+                    //  without the { new: true } flag  Mongo would return the original document instead of the updated document.
+                    { new: true }
+                );
+
+                return thought;
+            }
+
+            throw new AuthenticationError('You need to be logged in!');
+        },
+        // create a reaction
+        addReaction: async (parent, { thoughtId, reactionBody }, context) => {
+            if (context.user) {
+                const updatedThought = await Thought.findOneAndUpdate(
+                    { _id: thoughtId },
+                    { $push: { reactions: { reactionBody, username: context.user.username } } },
+                    { new: true, runValidators: true }
+                );
+
+                return updatedThought;
+            }
+
+            throw new AuthenticationError('You need to be logged in!');
+        },
+        // add a friend
+        addFriend: async (parent, { friendId }, context) => {
+            if (context.user) {
+                const updatedUser = await User.findOneAndUpdate(
+                    { _id: context.user._id },
+                    // A user can't be friends with the same person twice, though, hence why we're using the $addToSet
+                    // operator instead of $push to prevent duplicate entries.
+                    { $addToSet: { friends: friendId } },
+                    { new: true }
+                ).populate('friends');
+
+                return updatedUser;
+            }
+
+            throw new AuthenticationError('You need to be logged in!');
+        }
     }
 };
 
