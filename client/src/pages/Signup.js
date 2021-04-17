@@ -1,7 +1,18 @@
 import React, { useState } from 'react';
 
+// import our mutation and the necessary Hook to put it to use
+import { useMutation } from '@apollo/react-hooks';
+import { ADD_USER } from '../utils/mutations';
+
+import Auth from '../utils/auth';
+
 const Signup = () => {
   const [formState, setFormState] = useState({ username: '', email: '', password: '' });
+
+  // the useMutation() Hook creates and prepares a JavaScript function that wraps around our mutation code and returns
+  // it to us. In our case, it returns in the form of the addUser function that's returned. We also get the ability
+  // to check for errors.
+  const [addUser, { error }] = useMutation(ADD_USER);
 
   // update state based on form input changes
   const handleChange = (event) => {
@@ -13,9 +24,23 @@ const Signup = () => {
     });
   };
 
-  // submit form
-  const handleFormSubmit = async (event) => {
+  // we will now pass the data from the form state object as variables for our addUser mutation function. Upon success,
+  // we destructure the data object from the response of our mutation and simply log it to see if we're getting our token.
+  // submit form (notice the async!)
+  const handleFormSubmit = async event => {
     event.preventDefault();
+
+    // use try/catch instead of promises to handle errors
+    try {
+      // execute addUser mutation and pass in variable data from form
+      const { data } = await addUser({
+        variables: { ...formState }
+      });
+      // put token in local storage
+      Auth.login(data.addUser.token);
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   return (
@@ -56,6 +81,7 @@ const Signup = () => {
                 Submit
               </button>
             </form>
+            {error && <div>Sign up failed</div>}
           </div>
         </div>
       </div>
